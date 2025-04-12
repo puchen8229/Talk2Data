@@ -14,7 +14,8 @@ library(readr)
 library(dplyr)
 library(stringr)
 library(shinyjs)
-
+# Set CRAN mirror globally
+options(repos = c(CRAN = "https://cloud.r-project.org"))
 ui <- fluidPage(
   titlePanel("Chat with Data"),
   sidebarLayout(
