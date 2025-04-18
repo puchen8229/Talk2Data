@@ -1,12 +1,3 @@
-#
-# This is a Shiny web application. You can run the application by clicking
-# the 'Run App' button above.
-#
-# Find out more about building applications with Shiny here:
-#
-#    https://shiny.posit.co/
-#
-
 library(shiny)
 library(httr)
 library(ggplot2)
@@ -14,10 +5,10 @@ library(readr)
 library(dplyr)
 library(stringr)
 library(shinyjs)
-# Set CRAN mirror globally
-options(repos = c(CRAN = "https://cloud.r-project.org"))
+
 ui <- fluidPage(
-  titlePanel("Chat with Data"),
+  useShinyjs(),
+  titlePanel("AI Data Analyst - Robust Data Handling"),
   sidebarLayout(
     sidebarPanel(
       fileInput("file", "Upload CSV (optional)", accept = ".csv"),
@@ -33,25 +24,11 @@ ui <- fluidPage(
         tabPanel("Results",
                  h4("Generated Code"),
                  verbatimTextOutput("code_display"),
-                 
-                 # Changed validation messages to be collapsible
-                 #actionButton("show_validation", "Show Validation Messages", 
-                 #              icon = icon("chevron-down"),
-                 #             style = "margin-bottom: 10px;"),
-                 #hidden(
-                 #   div(id = "validation_panel",
-                 #      h4("Validation Messages"),
-                 #       verbatimTextOutput("validation_output")
-                 # )
-                 #),
-                 
                  h4("Text Output"),
                  verbatimTextOutput("text_output"),
                  h4("Plot Output"),
                  plotOutput("dynamic_plot", height = "500px"),
                  h4("Summary & Conclusions"),
-                 #verbatimTextOutput("summary_output")),
-                 #verbatimTextOutput("summary_output", placeholder = TRUE)),
                  div(style = "height: 17em; overflow-y: auto; border: 1px solid #ccc; padding: 8px; white-space: pre-wrap; background-color: #f9f9f9;",
                      textOutput("summary_output")
                  )),
@@ -69,20 +46,6 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   # Reactive data storage
   data <- reactiveVal(mtcars)
-  
-  # Toggle validation panel visibility
-  #observeEvent(input$show_validation, {
-  #  toggle("validation_panel")
-  #  if (input$show_validation %% 2 == 1) {
-  #    updateActionButton(session, "show_validation", 
-  #                       icon = icon("chevron-up"),
-  #                       label = "Hide Validation Messages")
-  #  } else {
-  #    updateActionButton(session, "show_validation",
-  #                       icon = icon("chevron-down"),
-  #                       label = "Show Validation Messages")
-  #  }
-  #})
   
   # Handle file uploads
   observeEvent(input$file, {
@@ -111,7 +74,7 @@ server <- function(input, output, session) {
     warnings <- character(0)
     
     # Check for variable references
-    vars_in_code <- unique(str_extract_all(code, "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b")[[1]])
+    vars_in_code <- unique(unlist(stringr::str_extract_all(code, "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b")))
     vars_in_code <- vars_in_code[!vars_in_code %in% c("plot_data", "ggplot", "print", "library", "require")]
     
     missing_vars <- vars_in_code[!vars_in_code %in% names(dataset)]
@@ -135,9 +98,9 @@ server <- function(input, output, session) {
     }
     
     # Check for ggplot aesthetics
-    if (str_detect(code, "ggplot")) {
-      aes_matches <- str_extract_all(code, "aes\\(([^)]+)\\)")[[1]]
-      aes_vars <- unique(unlist(str_extract_all(aes_matches, "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b")))
+    if (stringr::str_detect(code, "ggplot")) {
+      aes_matches <- unlist(stringr::str_extract_all(code, "aes\\(([^)]+)\\)"))
+      aes_vars <- unique(unlist(stringr::str_extract_all(aes_matches, "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b")))
       aes_vars <- aes_vars[!aes_vars %in% c("aes", "x", "y", "color", "fill", "size")]
       
       missing_aes <- aes_vars[!aes_vars %in% names(dataset)]
@@ -148,6 +111,65 @@ server <- function(input, output, session) {
     }
     
     list(errors = errors, warnings = warnings)
+  }
+  
+  # Function to check if package is installed
+  is_pkg_installed <- function(pkg) {
+    system.file(package = pkg) != ""
+  }
+  
+  # Function to install and load required packages
+  install_and_load_packages <- function(code, session) {
+    # Extract all library/require calls
+    pkgs <- unique(unlist(stringr::str_extract_all(code, "(library|require)\\(['\"]?([^'\")]+)['\"]?\\)")))
+    pkgs <- gsub("(library|require)\\(['\"]?([^'\")]+)['\"]?\\)", "\\2", pkgs)
+    pkgs <- gsub("['\"]", "", pkgs)
+    
+    if (length(pkgs) > 0) {
+      # Check for and install missing packages
+      new_pkgs <- pkgs[!sapply(pkgs, is_pkg_installed)]
+      if (length(new_pkgs) > 0) {
+        # Show notification in the main Shiny context
+        shiny::observe({
+          session$sendCustomMessage(
+            type = 'showNotification',
+            message = list(
+              message = paste("Installing packages:", paste(new_pkgs, collapse = ", ")),
+              type = "message"
+            )
+          )
+        })
+        
+        # Install packages
+        tryCatch({
+          install.packages(new_pkgs, repos = "https://cloud.r-project.org", quiet = TRUE)
+        }, error = function(e) {
+          session$sendCustomMessage(
+            type = 'showNotification',
+            message = list(
+              message = paste("Failed to install packages:", e$message),
+              type = "error"
+            )
+          )
+          return(FALSE)
+        })
+      }
+      
+      # Load all packages
+      for (pkg in pkgs) {
+        if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+          session$sendCustomMessage(
+            type = 'showNotification',
+            message = list(
+              message = paste("Failed to load package:", pkg),
+              type = "error"
+            )
+          )
+          return(FALSE)
+        }
+      }
+    }
+    return(TRUE)
   }
   
   # Function to generate summary from analysis
@@ -195,8 +217,9 @@ server <- function(input, output, session) {
   observeEvent(input$analyze, {
     req(input$question)
     
-    showNotification("Analyzing...", type = "message", duration = NULL)
-    on.exit(removeNotification("analyzing"))
+    # Show analyzing notification
+    id <- showNotification("Analyzing...", type = "message", duration = NULL)
+    on.exit(removeNotification(id), add = TRUE)
     
     tryCatch({
       current_data <- data()
@@ -211,13 +234,14 @@ server <- function(input, output, session) {
         "2. Creates a visualization using ggplot2\n",
         "3. Computes relevant statistics\n",
         "4. Uses the dataset which is already loaded as 'plot_data'\n",
+        "IMPORTANT: Include all required library() calls at the beginning\n",
         "IMPORTANT: Use print() on the ggplot object\n",
         "Format response EXACTLY like this:\n```r\n# R code here\n```\n",
         "Do not include any text outside the code block.",
         sep = ""
       )
       
-      # API call - Use your preferred method to get the API key
+      # API call
       api_key <- Sys.getenv("API_KEY")
       
       if (api_key == "") {
@@ -248,7 +272,7 @@ server <- function(input, output, session) {
       })
       
       # Extract R code
-      r_code <- str_match(ai_content, "```(?:r)?\\n([\\s\\S]*?)```")[,2]
+      r_code <- stringr::str_match(ai_content, "```(?:r)?\\n([\\s\\S]*?)```")[,2]
       
       if (!is.na(r_code) && nchar(trimws(r_code)) > 0) {
         # Clean the code
@@ -257,23 +281,13 @@ server <- function(input, output, session) {
         # Validate the code
         validation <- validate_code(r_code, current_data)
         
-        # Display validation messages (hidden by default)
-        output$validation_output <- renderPrint({
-          if (length(validation$errors) > 0) {
-            cat("ERRORS:\n")
-            cat(paste(validation$errors, collapse = "\n"), "\n\n")
-          }
-          if (length(validation$warnings) > 0) {
-            cat("WARNINGS:\n")
-            cat(paste(validation$warnings, collapse = "\n"), "\n")
-          }
-          if (length(validation$errors) == 0 && length(validation$warnings) == 0) {
-            cat("Code validation passed successfully - no issues found\n")
-          }
-        })
-        
         # Only proceed if no critical errors
         if (length(validation$errors) == 0) {
+          # Install and load required packages
+          if (!install_and_load_packages(r_code, session)) {
+            stop("Package installation/loading failed")
+          }
+          
           # Display raw code
           output$code_display <- renderPrint({
             cat(r_code)
@@ -339,6 +353,16 @@ server <- function(input, output, session) {
     }, error = function(e) {
       showNotification(paste("Error:", e$message), type = "error")
     })
+  })
+  
+  # Custom message handler for notifications
+  observe({
+    if (!is.null(input$showNotification)) {
+      showNotification(
+        input$showNotification$message,
+        type = input$showNotification$type
+      )
+    }
   })
 }
 
